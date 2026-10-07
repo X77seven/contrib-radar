@@ -1,0 +1,432 @@
+---
+name: contrib-radar
+description: 开源贡献侦察兵。核心定位：Find the right open-source contribution before you write code — 在写代码之前，用可解释的打分和碰撞检测帮你锁定真正值得投入的贡献机会。自动发现适合贡献的开源项目（按技术栈、活跃度、友好度筛选），深入分析项目中可提交 PR 的具体切入点（Issue 筛选 + 启发式打分 + Collision Risk 分级 + Why this issue 决策理由 + 架构缺陷分析 + Top 3 贡献建议），并支持持续监控与自动贡献模式。当用户想找开源项目做贡献、挖掘 PR/Issue 机会、分析某个 GitHub 仓库的贡献切入点、寻找 good first issue、准备开源贡献面试素材、或要求每天自动扫描贡献机会时使用。触发词：找开源项目、开源贡献、PR 切入点、Issue 挖掘、good first issue、给 XX 项目提 PR、开源项目分析、contribute to open source。若用户提供具体仓库地址，跳过项目发现，直接定位该项目的 PR 与 Issue 机会。
+agent_created: true
+---
+
+# Contrib Radar — 开源贡献雷达
+
+## Overview
+
+**核心定位：Find the right open-source contribution before you write code.**
+
+帮助用户在写代码之前，用可解释的打分和碰撞检测锁定真正值得投入的贡献机会：**找到合适的项目 → 找到合适的切入点（PR/Issue 方向）→ 决策支持 → 实现 → 提交 → 维护**。
+内容源自《AI Agent 开源项目贡献完整流程手册》，并融合了 GitHub 官方指南与社区最佳实践（项目健康度打分、聚合站点、维护者沟通规范）。
+
+核心原则：**先沟通再动手、小步快跑、一切结论定位到具体文件与函数，禁止泛泛而谈、禁止编造数据。**
+
+v3 更新：脚本层基于共享封装 `scripts/github_api.py`（统一限速/降级）；`find_issues.py` 新增启发式打分与撞车检测（剔除已被 open PR 引用的 Issue）；`repo_health.py` 新增 AI 生成代码政策检查；`discover_repos.py` 新增新手甜蜜区模式（--beginner）与 --json 导出。
+v3.1 更新：新增 Route C 持续监控（每日定时任务）与 Route C+（自动实现 + 人工确认提交）。
+v3.2 更新：基于实战反馈的全链路增强——`find_issues.py` 标签零命中自动 fallback 全量 issue + milestone 打分维度；`repo_health.py` AI 政策去误报；`contribution-workflow.md` 补认领检测/baseline/rebase/可复现测试报告/Windows 坑；SKILL.md 降级链加 MCP/OAuth；Route C+ 扩展为完整自动贡献流程（状态持久化 + 质量门控 + PR 生命周期跟踪）。
+v3.3 更新：决策可解释性升级——`find_issues.py` 新增 Collision Risk 分级（LOW/MEDIUM/HIGH + 原因 + 建议）与 Why this issue? 决策理由清单（✓/⚠）；README 新增 Case Study 漏斗图（From 1,000 Issues → 3 Contributions）与 Core vs Agent Workflow 能力边界表；项目定位收紧为"Find the right open-source contribution before you write code"。
+v3.4 更新：打分模型升级——Contribution Score 拆分为 Issue Quality（清晰度30+标签15+新鲜度25+milestone20+讨论10）和 Contribution Feasibility（撞车30+修改范围25+新手友好25+技术栈匹配20）双维度，最终分 = Quality×0.5 + Feasibility×0.5；新增 `--stack` 技术栈匹配度（Stack Match % + 逐项 ✓/—），匹配仓库主语言和 issue 正文关键词。
+v3.5 更新：新增 `references/api-pr-submission.md`——git clone/push 被代理或防火墙阻断时，改用纯 GitHub REST API（fork → Git Data API → PR）完成提交；Route C+ 提交步骤挂接该降级通道。
+v3.6 更新：Route C+ 全面自动化——取消默认流程中的两个人工确认点，扫描、筛选、实现、提交、维护全程无人干预；6 项质量门控 + 冷却期 + 黑名单成为唯一安全防线（不过不提交）；人工确认降级为可选保守模式（用户在 Query 中显式开启才生效）。
+v3.7 更新：执行可视化——新增 `scripts/progress.py` 共享进度事件模块，五个入口脚本按阶段向 stderr 发射 `[CR-PROGRESS]` 单行 JSON 事件（管道模式，agent/CI 消费）或刷新 ASCII 进度条（TTY 模式，人类观看），stdout 数据契约不受影响；SKILL.md 新增「执行可视化规范」（双层更新机制 / 进度卡片四区域 / Route 阶段序列表 / 异常状态处理 / 核心功能不受影响硬约束）。
+v3.9.5 更新：文档类贡献的事实校验——新增「先核源码再写文档」硬性规则：动笔前逐条从源码读出默认值/分支/透传/插值/互斥约束，
+并善用仓库自带测试与源码 assert 文案作为权威出处，「搜不到某机制」本身即为"不支持"的证据。
+同时修正 v3.9.4 的一处过度泛化：pre-commit 不一定跑 `--all-files`，`--from-ref`（只检改动文件）同样常见，
+两者对"红灯是否算到你头上"结论相反，必须先读 workflow 确认。
+v3.9.4 更新：docs-only PR 红灯陷阱——新增「docs-only PR 的红灯陷阱」硬性规则：只改文档的 PR 会被路由到独立轻量 workflow，
+而该 workflow 在 main 上恒为 skipped（普通 commit 不触发），故"main 是绿的"不能当基线；红灯多来自 `--all-files` 扫全仓库时
+别人刚合入 PR 引入的违规，需拉 job 日志列出报错文件并与自己 changed files 求交集来确证。
+确证后不自行修大范围机械违规（超 300 行且易与活跃子包冲突），改为 PR 附证据评论 + 向上游开 issue 列精确 file:line 清单。
+另新增「跑本 skill 自带测试的正确姿势」：本地 skill 目录不含 `tests/`，需从远端拉取；`run_tests.py` 零依赖（纯标准库 unittest），PyPI 不可达也能跑。
+v3.9.3 更新：文档改动执行风险硬性规则——新增「文档改动的隐藏执行风险」，要求提交前逐行读示例抽取脚本的收集逻辑并显式标注跳过标记，禁止假设"无 title 不执行"。
+v3.9.1 更新：碰撞检测分页修复——`find_issues.py` 原先只拉 search 第 1 页（100 条）open PR，而热门仓库 open PR 常达 200~400 个，
+导致大量真实撞车被漏检（实战：AgentScope #2248 被写明 `Closes #2248` 的 PR #2453 认领却仍判 LOW）。
+改为分页拉全量（上限 600）并在搜索失败时显式告警，不再静默输出"扫描 0 个引用"这种假阴性；
+输出增加"扫描 X/Y 个 open PR"与"读不出评论区口头认领"提醒。
+v3.9 更新：PR 维护与执行通道实战增强——Route C+ 提交步骤新增"git clone 卡死 5 分钟即转 REST API 通道"判定（docs-only/单文件改动全程免 clone）；
+硬性规则新增「CI 基线对比」三步法（看报错文件 → 识别 `--all-files` 误伤 → 查 base 分支基线），禁止把上游预先存在的红灯算到自己头上并据此改代码；
+「撞车意识」补充脚本漏检项：碰撞检测只看 open PR 引用，读不出评论区里的口头认领，必须人工读评论。
+v3.8.1 更新：认证层实效性修复——`github_api.py` 模块级 `TOKEN` 原先只读环境变量 `GITHUB_TOKEN`，导致 `gh auth login` 已登录时 `discover_repos.py` / `find_issues.py` / `repo_health.py` 仍以未认证身份请求（core 仅 60 次/小时），批量体检必然 403 `rate_limited`；新增 `_ensure_token()` 在首次 `get()` 前按四源补全 Authorization 头（配额恢复 core 5000/h、search 30/min）。同时修复 `repo_health.py` 批量模式下单仓查询失败时 `extra["ai_policy"]` 触发 `KeyError` 直接崩溃的问题，改为 `.get()` 兜底并回填 `error` 字段。
+v3.8 更新：GitHub 授权门控——新增 `scripts/auth_check.py` 授权预检入口与 `github_api.py` 认证层（四源 token 解析：环境变量 `GITHUB_TOKEN` → `gh auth token` → git credential helper → `~/.contrib-radar/token`；`GET /user` 验证有效性并返回提 PR 的身份账号）；SKILL.md 文首新增「前置条件：GitHub 授权」——写操作（认领评论 / fork / push / create PR / commit）以 token 所属账号身份执行，未授权时先给授权步骤、禁止继续；`claim_issue.py` 输出增加认证状态段；授权指引覆盖 PAT / gh CLI / GitHub 连接器（MCP/OAuth）三条路径。
+v3.6.1 更新：Windows 兼容性修复——`github_api.py` 新增 `ensure_utf8_stdio()`（交互终端切代码页 65001 + stdio reconfigure UTF-8），五个入口脚本启动时调用；修复 Windows GBK(cp936) 控制台/管道下输出 ⭐🟢✓• 等字符时 `print` 抛 `UnicodeEncodeError` 直接崩溃的问题（JSON 输出为 `ensure_ascii=False`，必崩）；新增 4 个回归测试。
+
+## 触发条件
+
+- 用户想找开源项目做贡献但不知道选哪个（"帮我找个适合贡献的开源项目"）
+- 用户给了具体仓库地址，想知道能提什么 PR / Issue（"分析这个项目有什么贡献机会"）
+- 用户想挖 good first issue、评估某项目是否值得投入
+- 用户想把开源贡献作为面试素材来规划
+- 用户要求"每天/定期盯一下有哪些可认领的 Issue"（Route C，可由定时任务触发）
+- 用户要求"发现值得做的 Issue 就自动实现并提交 PR"（Route C+ 自动贡献模式）
+
+## 输入
+
+| 输入 | 必填 | 说明 |
+|------|------|------|
+| 项目地址 | 否 | GitHub 仓库 URL。**提供则跳过项目发现，直接进入 Route B 分析** |
+| 技术栈 | 否 | 如 "Python、LangChain、MCP"。Route A 必需，缺失时先问一次 |
+| 兴趣方向 | 否 | 如 "AI Agent / 后端框架 / DevOps"，默认 AI Agent |
+| 时间预算 | 否 | 默认 "2 周内可完成的 PR" |
+
+## 前置条件：GitHub 授权（使用本 skill 的第一步）
+
+本 skill 的终点是**替你向开源仓库提 PR / commit**——fork、push、开 PR 全部以授权 token 所属的 GitHub 账号身份执行。**动手之前必须先授权并确认身份**，否则你不会知道 PR 将以哪个账号提交，也无法进入任何写操作流程。
+
+1. **检测授权**：运行 `python scripts/auth_check.py --json`
+   - `authenticated: true` → 记下 `login`（这就是你提 PR 的账号），继续
+   - `authenticated: false` → 按返回的 `guidance` 完成授权后重试；**未授权时禁止进入认领 / 提 PR / commit 流程**
+2. **三条授权路径**（任选其一，详细步骤见 `guidance`）：
+   - **Personal Access Token（PAT，最通用）**：github.com/settings/tokens 生成 → 存入 `GITHUB_TOKEN` 环境变量或 `~/.contrib-radar/token` 文件
+   - **`gh auth login`**：本机已装 GitHub CLI 时最省事
+   - **绑定 GitHub 连接器（WorkBuddy 等带连接器的环境）**：连接器管理中搜索 GitHub 完成 OAuth 绑定——绑定即视为已认证，且该通道不受未认证限流影响，读写都优先走它
+3. **token 解析优先级**（`github_api.resolve_token()`，先命中先返回）：环境变量 `GITHUB_TOKEN` → `gh auth token` → git credential helper（不落盘不回显）→ `~/.contrib-radar/token`
+4. **只读豁免**：项目发现 / issue 扫描 / 体检等只读操作可免认证先行（限流降级）；一旦进入认领评论、提 PR、commit 等写操作，必须先过授权门控
+5. **token 失效**（`http_401`）：按授权步骤重新生成 / 更换 token 后重试，不要反复重试同一失效 token
+
+## 路由逻辑
+
+```
+用户提供仓库 URL？
+├── 是 → Route B：直接分析该项目的 PR/Issue 切入点
+├── 否 + 用户要求每日/定期监控或自动贡献 → Route C / C+
+└── 否 → Route A：发现候选项目 → 用户选定一个 → 进入 Route B
+```
+
+## 工具降级链
+
+所有 GitHub 数据获取按以下顺序降级，任一级失败自动降下一级：
+
+1. **已绑定的 GitHub MCP / OAuth 连接**（如 `github-remote` skill 的 MCP 工具）：最可靠，走 OAuth 认证，不受未认证限流影响，支持读写操作（绑定该连接器即视为已授权）
+2. `gh` CLI（已安装且已登录时）：`gh search repos` / `gh search issues` / `gh pr create`
+3. skill 自带脚本直连 API（共享封装 `scripts/github_api.py`，零依赖，四源 token 解析 + `scripts/auth_check.py` 授权预检）：
+   `scripts/discover_repos.py` / `scripts/find_issues.py` / `scripts/repo_health.py`
+4. WebFetch 直接抓 GitHub 页面或 API
+5. WebSearch（最后手段，数据可靠性最低，需标注"未实时核验"）
+
+> **限流提示**：未认证时 Search API 约 10 次/分、core API 约 60 次/时（v3.8.1 起已自动复用已登录的 gh CLI token，
+> 正常应为 core 5000/时、search 30/分；若 `/rate_limit` 返回 core limit=60，说明 token 未生效，需排查 `_ensure_token()`）；
+> 脚本已内置自适应限速
+> （只对 search 端点打点，403 时按 X-RateLimit-Reset 等待重试）。多仓库批量筛查强烈建议设置
+> `GITHUB_TOKEN`（core 5000/时、Search 30/分）或使用已绑定的 MCP/OAuth 连接，避免等待或降级。
+> **注意**：未认证 API 限流耗尽后，MCP/OAuth 连接不受影响，应优先切换到 MCP 通道。
+> **授权门控（v3.8）**：只读操作可免认证；认领评论 / fork / push / create PR 等写操作前必须先过
+> `scripts/auth_check.py` 预检，未授权先给授权步骤——详见文首「前置条件：GitHub 授权」。
+
+## 执行可视化规范（v3.7）
+
+执行期间必须让用户清晰看到运行进度。核心原则：**真进度可以慢，假进度不许有**。
+
+### 更新机制（双层）
+
+| 层 | 载体 | 消费者 | 形式 |
+|---|---|---|---|
+| 脚本层 | 六个入口脚本 + `scripts/progress.py` | agent / CI | 管道模式：stderr 逐行 `[CR-PROGRESS] {json}` 事件（纯 ASCII，GBK 安全）；TTY 模式：ASCII 进度条原地刷新 |
+| Agent 层 | 对话内进度卡片 | 用户 | 阶段边界刷新，聚合脚本事件 + agent 自身执行状态 |
+
+- 脚本事件字段：`phase / status(start|running|ok|warn|error|skip|done) / current / total / item / detail`。
+- 批量命令（体检多仓库、扫描多 issue）执行期间无法增量刷新卡片：条目级进度以 stderr 事件为准，命令返回后在下一次卡片刷新时汇总。
+- 纯 LLM 阅读阶段（读 CONTRIBUTING、逐条读 issue 正文）没有脚本事件，卡片显示"进行中"，**不得编造百分比**。
+- 双通道互斥且自动选择：stderr 是管道（agent 消费）出 JSON 事件；stderr 是 TTY（人类观看）出 ASCII 进度条。`CR_PROGRESS_BAR=1` 可强制进度条，`CR_QUIET=1` 或 `--quiet` 全部关闭。
+
+### 展示形式（进度卡片）
+
+预计 ≥2 个阶段或 ≥3 次工具调用的执行，渲染一张进度卡片，包含四个区域：
+
+1. **阶段步骤条**：当前 Route 的阶段序列（见下表），已完成 ✓ / 进行中 ▶ / 未开始 ○ / 失败 ✗；
+2. **当前状态行**：正在执行的动作 + 计数器（如"体检 3/10"）+ 当前条目名；
+3. **阶段性成果**：已完成阶段的关键数字（候选 N 个 / 高分 issue M 条 / 待跟踪 PR K 个）；
+4. **异常区**（有异常才出现）：红色状态 + 失败项 + 已采取的降级动作。
+
+Route 阶段序列（卡片步骤条的数据源，脚本 phase 名与之对齐）：
+
+| Route | 阶段序列 | 脚本 phase 名 |
+|---|---|---|
+| A | 画像收集 → 项目发现 → 健康度体检 → 候选清单 | `repo-discover` / `health-check` |
+| B | 项目理解 → Issue 筛选 → 撞车检测 → 架构分析 → Top 3 建议 | `issue-fetch`(+`issue-fallback`) / `collision-detect` / `issue-score` |
+| B（认领） | bot 检测 → 冲突检查 → 认证检查 → 建议生成 | `claim-bot-detect` / `conflict-check` / `auth-check` |
+| C | 跨仓扫描 → 撞车复核 → 日报 diff → 输出 | 复用上述 phase |
+| C+ | 状态读取 → 打分筛选 → 自动实现 → 质量门控 → 提交 → PR 跟踪 | `pr-track` 等 |
+
+### 异常状态处理
+
+- **单条目失败**（API 错误 / 超时 / 解析失败）：该条目标 ✗ 并继续，批次结束时汇总失败清单与原因（脚本已发 `error` / `skip` 事件，卡片必须呈现）；
+- **整阶段失败**（限流 / 认证失效）：显示降级链当前所在层级（MCP/OAuth → gh CLI → 脚本 → WebFetch → WebSearch），按既有降级链执行并如实标注；
+- **质量门控未过**（Route C+）：明确显示"未提交" + 未过项，禁止静默跳过；
+- **通用红线**：任何异常不得渲染为成功；事件中的 `warn` / `error` / `skip` 必须原样呈现。
+
+### 不干扰核心功能（硬约束）
+
+- 进度输出只走 stderr；`--json` 的 stdout 契约不变（纯 JSON，无进度行混入）；
+- 进度代码零第三方依赖；`--quiet` / `CR_QUIET=1` 可完全关闭；
+- 进度字符串纯 ASCII（GBK 控制台安全，与 v3.6.1 同一原则）；
+- 进度事件不得改变任何打分、筛选、门控逻辑。
+
+## Route A：项目发现（无 URL 时）
+
+1. **收集画像**：确认技术栈、方向、时间预算。只问缺失的关键项，一次问完。
+   **技术栈优先确认 Python / TypeScript**——当前前沿 Agent 框架生态以 TypeScript 为主
+   （Vercel AI SDK、OpenAI Agents SDK、Mastra、LangGraph.js、Eliza 等），Python 侧以
+   LangChain / PydanticAI / OpenAI SDK 为主；用户未指定时先问一句是否考虑 TS 项目，
+   不要默认只搜 Python。
+2. **生成候选**：运行 `scripts/discover_repos.py --topic <方向> --language <python|typescript> --stars 1000`
+   获取候选清单（脚本的 stars/pushed 默认值已对齐手册标准；新手可加 `--beginner` 进入 100~1000 star
+   甜蜜区模式）。结果不足时按降级链补充，或引导用户放宽条件。聚合站点等补充渠道见 `references/project-discovery.md`。
+3. **健康度筛查**：对候选批量运行 `scripts/repo_health.py <repo1> <repo2> ...`，按手册标准打红绿灯；
+   同时查看输出的 **AI 政策** 提示（是否有 AI 生成代码限制声明）。
+4. **输出候选清单**（表格），并给出推荐：
+
+| 项目 | Stars | 技术栈 | 最近提交 | Issue 关闭率 | PR 响应 | 健康度 | AI政策 | 推荐理由 |
+|------|-------|--------|---------|-------------|---------|--------|--------|---------|
+
+5. **让用户选定 1 个项目**后进入 Route B。禁止替用户擅自决定。
+
+## Route B：贡献切入点分析（有 URL 或 Route A 选定后）
+
+详细维度、筛选条件与输出模板见 `references/opportunity-analysis.md`，严格执行：
+
+1. **项目理解**：读 README.md / CONTRIBUTING.md / CHANGELOG.md / 主入口文件（不存在则跳过）。克隆或在线阅读均可。输出：目录结构（depth=3）+ 核心模块标注 + 2~3 句话概括项目核心机制。
+2. **Issue 列表筛选**：先运行 `scripts/find_issues.py <owner/repo> [--stack python,langchain]` 拿到机筛候选
+   （默认新手友好标签 / open / 近 60 天活跃 / 无 assignee / **双维度打分**：Issue Quality + Contribution Feasibility → Contribution Score / **Collision Risk 分级**（LOW/MEDIUM/HIGH，HIGH 默认隐藏，加 `--show-collision` 查看）/ **Stack Match**（`--stack` 参数，匹配仓库主语言和 issue 正文）/ **Why this issue? 决策理由清单**（✓/⚠）；
+   **标签零命中时自动 fallback 到全量 open issue 列表**，避免漏检不打标签的 roadmap issue）。
+   再逐条阅读正文与评论做语义判断（评论中是否有人声称认领、描述是否清晰、改动是否 1~3 个文件可控）。
+   按模板表格输出。需要更大候选面时加 `--include-bugs`。
+3. **AI 政策前置检查**：读取 CONTRIBUTING.md / 仓库政策，扫描 AI 生成代码限制关键词
+   （v3.2 已去误报："llm" 单独命中不触发，必须与禁止性动词组合才算限制声明）。命中"明确禁止"时，标注高风险并建议用户改用
+   "理解需求后自行实现、明确标注无 AI 辅助"的方式；命中"相关表述"时提示人工确认口径。
+4. **架构层缺陷分析**：AI Agent 类项目按 7 个维度逐一检查（任务规划 / 多 Agent 协作 / 上下文管理 / Human-in-the-loop / 评估框架 / Tool 检索路由 / Streaming 可见性）；非 Agent 项目改用通用维度（见 references 附录）。**每个维度必须定位到具体文件路径 + 函数名**，按"现状/缺陷/影响程度/改进方向/改动范围/面试叙事角度"六段输出。
+5. **Top 3 贡献建议**：综合两个维度，按模板输出排序建议（含入口文件、适配度、工作量、面试价值、风险点）。输出前对照 `references/example-analysis.md` 的格式自检清单校准颗粒度。
+
+## 报告落盘约定
+
+Route B 分析完成后，将完整报告写入 `oss-analysis-<owner>-<repo>-<YYYY-MM-DD>.md`（当前工作目录），并向用户展示。后续方案设计阶段直接读取该文件注入上下文，不依赖对话复制粘贴。Route A 的候选清单可追加写入同一文件头部，形成完整决策链。
+
+## Route C：持续监控（每日定时任务）
+
+当用户要求"每天/定期盯一下有哪些可认领的 Issue"、或任务由定时任务（如豆包 cron）触发时启用：
+
+1. **每日例行**（触发后依次执行）：
+   - 跨仓库扫描：按 `references/project-discovery.md` 的搜索语法或脚本，扫描
+     `label:"good first issue"` / `label:"help wanted"` + `no:assignee` + 用户技术栈语言
+     （Python / TypeScript）+ 近 24~48 小时有更新，捕获新增的可认领 Issue；
+   - 可选：`discover_repos.py` 发现新候选项目，对高价值新仓库跑 `repo_health.py` 体检（含 AI 政策）；
+   - 撞车复核：`find_issues.py` 已内置 open PR 引用剔除，跨仓库扫描时对 top 候选手动复核认领评论。
+2. **与上次结果对比**：读取上次日报 `daily-issue-scan-<YYYY-MM-DD>.md`，只输出差异（新增 / 状态变化 / 已认领）。
+3. **输出日报**：写入 `daily-issue-scan-<YYYY-MM-DD>.md`，包含：
+   - 今日新增可认领 Issue（表格：# / 仓库 / 标题 / 打分 / 链接）
+   - 状态变化（新增 N 条 / 被认领 M 条 / 已关闭 K 条）
+   - 推荐动作（1~2 条：最值得现在动手的 Issue + 理由）
+4. **限速注意**：未认证 Search API 10/min——跨仓库扫描控制搜索次数（每语言 1 次 + 撞车 1 次）；
+   设置 `GITHUB_TOKEN`（search 30/min）可放开。脚本见 `scripts/`。
+
+### Route C+：全自动贡献模式（发现 → 实现 → 提交 → 维护）
+
+当用户要求"发现值得做的 Issue 就自动实现并提交 PR"、或定时任务配置为自动贡献模式时启用。
+
+**核心设计：状态持久化 + 质量门控 + 全自动执行（全程无人干预，人工确认为可选保守模式）。**
+
+#### 0. 状态持久化（必须）
+
+定时任务是无状态的，但贡献流程是有状态的。每次运行前读取 `contrib-radar-state.json`（当前工作目录），运行后更新：
+
+```json
+{
+  "scanned_issues": {
+    "owner/repo#25": {"first_seen": "2026-09-11", "status": "pr_submitted", "pr_url": "https://github.com/.../pull/72"}
+  },
+  "active_prs": [
+    {"repo": "helsome/folio", "pr_number": 72, "status": "awaiting_review", "last_check": "2026-09-12T08:00:00Z"}
+  ],
+  "blacklisted_repos": [],
+  "cooldown": {"owner/repo": "2026-09-20"},
+  "daily_stats": {"2026-09-11": {"scanned": 27, "candidates": 3, "implemented": 1, "pr_submitted": 1}}
+}
+```
+
+状态字段说明：
+- `scanned_issues`：防止重复扫描/实现同一个 issue
+- `active_prs`：跟踪已提交 PR 的生命周期
+- `blacklisted_repos`：AI 政策 blocked 或维护者明确拒绝的仓库
+- `cooldown`：PR 被关闭后该仓库进入冷却期（默认 7 天），避免反复提交被拒
+- `daily_stats`：每日统计，用于复盘
+
+#### 1. 打分筛选（自动）
+
+对候选按可上手度打分（描述清晰度 / 标签 / milestone / 评论甜蜜区 / 新鲜度），满足以下**全部**条件才进入自动实现：
+- 预估改动 1~3 个文件
+- 工作量可控（预计 < 300 行）
+- 仓库 AI 政策非 blocked
+- 该 issue 未在 `scanned_issues` 中（未处理过）
+- 该仓库不在 `blacklisted_repos` 和 `cooldown` 中
+- 该仓库当前没有用户的活跃 PR（同一仓库同时最多 1 个活跃 PR）
+
+#### 2. 选点（自动，可审计）
+
+自动选定打分最高、预估改动最小、Collision Risk 最低的 1 个 issue，把选型依据写入每日日报供事后审计：
+- 选定的 issue（标题、链接、打分、预估工作量）
+- 简要实现方案（2~3 句话）
+- 风险点
+
+**默认直接开始实现，不停下等待确认。** 唯一例外：用户在 Query 中显式开启人工确认（保守模式）时，先展示上述信息、等用户确认后再实现；用户拒绝则标记该 issue 为 `skipped_by_user`，继续下一个候选。
+
+#### 3. 自动实现（按 `references/contribution-workflow.md`）
+
+执行完整流程：
+- Baseline 采集（改代码前先跑全量测试记录预先存在的失败）
+- 认领方式检测（bot /claim 或评论认领）
+- 方案设计 → 接口定义 → 核心逻辑 → 集成 → 测试
+- 每步可验证，项目始终可运行
+
+#### 4. 质量门控（硬门槛，不通过不提交）
+
+实现完成后必须通过以下**全部**检查才允许进入提交阶段：
+- [ ] 项目原有测试全部通过（或新增失败为 0，与 baseline 对比）
+- [ ] typecheck / lint 通过
+- [ ] 新增代码有测试覆盖（至少 2~3 个核心用例）
+- [ ] 改动行数在阈值内（默认 300 行，超出则建议拆分或标记需人工确认）
+- [ ] AI 政策非 blocked
+- [ ] 无撞车（提交前最后复核该 issue 无新 open PR 引用）
+
+任何一项不通过 → 记录失败原因到状态文件 → **不提交** → 下次运行时重试（最多 3 次）或跳过。
+
+#### 5. 提交（自动，材料可审计）
+
+质量门控全部通过后**直接执行提交**，完整的「待提交材料」写入每日日报供事后审计：
+- 改动文件清单 + diff 摘要
+- 可复现测试报告（环境/命令/pass-fail 数量/baseline 对比）
+- PR 描述草稿（Problem/Solution/Changes/Testing/Notes）
+- Commit 拆分方案
+
+提交步骤：
+1. fork 目标仓库（如未 fork）
+2. 创建分支（`feat/<issue-number>-<short-desc>`）
+3. Conventional Commits 拆分 2~4 个 commit
+4. push 到 fork
+5. 创建 Pull Request（标题/描述用准备好的材料，关联 `Closes #N`）
+
+> **可选保守模式**：用户在 Query 中显式开启人工确认时，提交前先向用户展示上述材料，确认后才执行。
+
+> **git 不可用时的降级通道**：当 `git clone` / `git push` 被代理、防火墙或大仓库传输阻断（`RPC failed` / `IncompleteRead`），但 REST API 小响应仍可用时，跳过本地 git，改用 **Git Data API** 直接构造 commit 并开 PR（fork → blob → tree → commit → branch ref → PR）。完整流程与脚本见 `references/api-pr-submission.md`。
+>
+> **v3.9.2 实战：受限网络环境的三段式探测**。在动手前先花 1 分钟探测本机网络能力，决定"能做哪类贡献"，避免中途卡死：
+> 1. `git clone --depth 1 <极小仓库>` —— 失败（常见于代理下 `schannel: server closed abruptly` /
+>    `OpenSSL unexpected eof`，且与仓库大小无关）即判定 **git 不可用**，不要在大仓库上反复重试。
+>    取源码改用 `curl -L -o repo.tar.gz https://codeload.github.com/<owner>/<repo>/tar.gz/refs/heads/main` 下载后解压，
+>    实测可用且比 git 快；提交继续走 REST API 通道。
+> 2. `curl -o /dev/null -w "%{http_code}" https://pypi.org/simple/` —— 失败即 **无法安装依赖、无法运行测试**。
+>    此时负责任的做法是**只做 docs-only 改动**（其 CI 仅校验 Markdown 格式，可在本地按
+>    smartquotes / 行尾空格 / 文件尾换行 / 无 RST 语法 几条规则自查），代码类改动不要硬提——无法验证的修复会浪费维护者时间。
+> 3. 网络探测结果应写入状态文件，供后续任务直接读取，不要每次重新踩。
+>
+> **v3.9 实战判定**：大仓库 `git clone` 出现"目录已建立但持续 5 分钟以上 0 字节"时即可判定为阻断，**不要继续空等到超时**。
+> docs-only / 单文件改动直接走 API 通道（fork → `POST /git/refs` 建分支 → `PUT /contents/{path}` 提交 → `POST /pulls` 开 PR），
+> 全程无需本地 clone，实测稳定。需要跑本地测试验证的改动才必须坚持 clone。
+
+#### 6. PR 生命周期跟踪（每日自动）
+
+提交后不是结束，每次定时任务运行时检查所有 `active_prs`：
+- **CI 状态**：查 check runs，失败则自动尝试修复（如果是简单的 lint/type 错误）或通知用户
+- **Review 意见**：有新 review 评论则通知用户，简单的修改（拼写、格式）可自动处理
+- **上游更新**：上游 main 有新 commit 且与 PR 文件有交集 → 自动 rebase + 重跑测试 + force push（rebase 冲突复杂时通知用户）
+- **无回应跟进**：超过 7 天无 review 回应 → 自动发礼貌跟进评论（"Gentle ping: this PR is ready for review when you have time."）
+- **被合并** → 更新状态为 `merged`，记录成果，从 active_prs 移除
+- **被关闭** → 更新状态为 `closed`，记录原因，该仓库进入 cooldown
+
+#### 7. 并发与速率控制
+
+- 每天最多实现 N 个 issue（默认 1，可配置），避免贪多嚼不烂
+- 同一仓库同时最多 1 个活跃 PR
+- GitHub API 调用全局限速（脚本已处理；跨天运行时状态文件中记录剩余配额）
+- 优先使用 MCP/OAuth 连接，避免未认证限流
+
+#### 8. 认证门控（v3.8，硬性）
+
+- 任何 GitHub 写操作（认领评论 / fork / push / create PR / commit）执行前，必须先运行 `python scripts/auth_check.py --json` 并确认 `authenticated: true`——写操作以该 `login` 账号身份执行
+- 未认证（`no_token` / `http_401`）：向用户展示授权步骤（见文首「前置条件：GitHub 授权」）并**停止后续写操作**——自动实现和材料准备不受影响，但提交步骤必须等用户完成授权
+- 瞬时失败（网络 / 限流，`auth_check.py` 退出码 2）：可稍后重试，不得跳过门控强行提交
+- 已绑定 GitHub 连接器 / MCP 的环境：该通道即认证通道，优先走连接器执行读写，无需再配 token
+
+#### 9. 红线
+
+- 仓库 AI 政策明确禁止 AI 生成代码（blocked）时不得生成提交材料
+- 提交前必须复核无撞车（该 issue 无新 open PR 引用、无新 assignee）
+- 质量门控不通过不得提交——全自动模式下这是唯一安全防线，任何一项不过就跳过该 issue，不带病上线
+- 默认（全自动）模式下，6 项质量门控全部通过即允许执行 GitHub 写操作（fork / push / create PR / 评论）；保守模式下，写操作前还必须获得用户确认
+
+## 后续阶段（可选，用户确认后执行）
+
+用户选定切入点并想继续推进时，按 `references/contribution-workflow.md` 执行：
+
+- **方案设计**：问题边界定义 → 2~3 个技术方案 + 对比矩阵 → 文件级实现规划 → 起草发给维护者的英文评论（≤150 词，先沟通再写代码）
+- **代码实现**：Baseline 采集 → 接口先行 → 逐步实现每步可运行 → 最小侵入 → 风格一致 → 验证（demo + 单测）
+- **PR 提交**：Conventional Commits 拆分 2~4 个 commit → PR 描述模板（含可复现测试报告）→ 提交后礼貌跟进
+- **PR 维护**：rebase 最新 main → 解决冲突 → 重跑测试更新报告 → force push
+- **面试叙事**：按 STAR 六要素整理（背景/贡献/过程/成果/困难/反思），可再压缩为 60 秒面试话术
+
+## 硬性规则
+
+- **禁止编造**：Stars、日期、Issue 编号等数据必须来自实时查询（MCP / WebFetch / gh CLI / 自带脚本），查不到就明说。
+- **先认领再动手**：动手前先在 Issue 下认领（bot `/claim` 或评论），避免与他人的工作冲突。发完 `/claim` 不要编辑评论。
+- **Baseline 先行**：改代码前先跑全量测试记录预先存在的失败，改完后对比，只有新增失败才是自己的问题。
+- **可复现测试报告**：PR 描述的 Testing 字段必须包含环境（runtime/OS/arch）、精确命令、pass/fail/skip 数量、预先存在的失败列表。
+- **遵守仓库规范**：任何产出建议必须以 CONTRIBUTING.md 为准；没有贡献指南的项目要标注风险。
+- **AI 政策红线**：仓库明确禁止 AI 生成代码贡献时，不得建议"直接让 AI 写代码提交"；应提示理解后自行实现，或换项目。
+- **选仓策略：竞争度比 Star 更重要（v3.9 实战）**。2026-09 实测，**高星仓库的 `help wanted` issue 已被抢空**——
+  AgentScope 181 个 open PR 引用了 187 个 issue、pydantic-ai 306 个 PR 引用 644 个、langgraph 245 个 PR 引用 121 个，
+  且评论区大量"I'd like to work on this"式口头认领（脚本读不出）。连试 7 个候选全部撞车或被维护者保留是常态，不是运气差。
+  选仓时优先看 **`open issue 多但被 open PR 引用少`** 的窗口，而不是 Star 高低；小仓库（ms-agent 级，42 open issue /
+  37 PR 月合并）往往比 80k star 的仓库更容易真正落地。发现连续 3 个候选撞车时，应停下来重估选仓策略而不是继续逐个试。
+- **撞车意识**：AI 时代 issue 被认领/被提交 PR 的速度明显加快，动手前必须复核该 Issue 是否已有人在做（含 open PR 引用）。
+  **脚本的碰撞检测只看 open PR 引用，漏检"口头认领"**——必须人工读评论区是否有 "I'd like to work on this" 类表述。
+  发现口头认领但该认领者长时间无 PR / 无 assignee / 无后续发言时，可在 issue 下 ping 对方并声明会让位后继续推进，把判断依据写进状态文件。
+- **CI 基线对比（禁止把上游红灯算到自己头上）**：PR 的 CI 报红时，先做三步判定再决定是否改代码——
+  ① 拉取失败 job 的日志，看 hook/测试**具体报错的文件路径**是不是你改的文件（`gh run view --job <id> --log -R owner/repo`）；
+  ② pre-commit 类检查常以 `--all-files` 运行，会扫全仓库，报错文件多半与你无关；
+  ③ 查 base 分支最近若干次同一 workflow 的运行结论（`gh api .../actions/workflows/<wf>/runs?branch=<base>`）作为基线。
+  确认为预先存在失败后，**不要为了迁就红灯改自己的代码**，改为在 PR 下附证据评论说明（失败 hook、报错文件、基线结论），并表示会在 base 转绿后 rebase。
+- **文档改动的隐藏执行风险（v3.9.3 血泪教训）**：很多仓库（pydantic-ai、mkdocs 系）会从 Markdown 里**抽取代码块当测试跑**。
+  不要凭直觉假设"没有 `title` 就不会被执行"——pydantic-ai 的 `find_filter_examples()` 对**所有** fence 都 `yield pytest.param(...)`，
+  title 只影响 test id 与跨文件注册表，无 title 的块照样执行。
+  动手前必须：① 找到抽取脚本（通常是 `tests/test_examples.py` 之类）逐行读收集逻辑；
+  ② 确认跳过语法（pydantic-ai 是 fence 上加 `{test="skip" lint="skip"}`，各仓库不同）；
+  ③ 挨个 fence 标注。否则你的文档片段会在 CI 里以 `NameError` 或真实 API 调用爆掉——
+  而且很可能因为**别的 job 先失败而暂时没暴露**，等上游修好才炸，变成埋雷。
+- **docs-only PR 的红灯陷阱（v3.9.4 实战）**：不少仓库（pydantic-ai 等）把"只改文档"的 PR 路由到一条**独立的轻量 workflow**，
+  而这条 workflow 在 `main` 上常常显示为 **skipped**——因为普通 commit 不是 docs-only，压根不触发。
+  于是产生两个反直觉后果，判断时务必区分：
+  ① **"main 是绿的"不代表没有红灯**。该 workflow 在 main 上从未真正跑过，main 的 `skipped` 不能作为基线。
+  判断基线要看**同为 docs-only 的其他 PR**，或直接在本地/工作树跑 `pre-commit run --all-files`。
+  ② **红灯可能是"全仓库污染"而非你的锅**——但**这取决于 CI 怎么调 pre-commit，务必先读 workflow 确认**（v3.9.5 修正）：
+  `pre-commit run --all-files` 会扫全仓库，把**别人刚合入的 PR** 引入的违规算到你头上（pydantic-ai 属此类）；
+  而 `pre-commit run --from-ref <base> --to-ref HEAD` 只检本次改动的文件（ms-agent 属此类），**别人的既有违规根本不会碰到你**。
+  两者结论相反，凭印象套用会误判。读 `.github/workflows/*.yaml` 里的实际命令行即可分辨，30 秒的事。
+  定位方法：拉失败 job 的日志，列出 hook 报错的**全部文件路径**，与你 PR 的 changed files 求交集——交集为空即可确证。
+  顺带检查这些文件的最近提交（`gh api "repos/O/R/commits?path=<f>&per_page=1"`），能直接定位到是哪个 PR 引入的。
+  确证后不要自己去修这些大范围机械违规（diff 大、与活跃子包的后续 PR 极易冲突，也违反 300 行范围控制），
+  改为：在 PR 下附证据评论 + **向上游开 issue** 列出精确 file:line 清单，并说明"任何 docs-only PR 都会红"这一影响面。
+  这类"修 CI 阻塞"的 issue 含金量高于盲改代码，且能让自己的 PR 名正言顺地等待 rebase。
+- **先核源码再写文档（v3.9.5 实战）**：文档类 PR 最常犯的错不是格式，而是**写出读起来合理但实际不成立的用法**。
+  动笔前先把要在文档里断言的每一条事实从源码读出来：默认值是什么、哪些取值会切到别的分支、参数是否原样透传、
+  有没有插值/解析器、互斥约束的报错文案原句。两个特别便宜的权威来源别忽略——
+  ① **仓库自己的测试**（给出真实的构造与调用方式，照抄即可，不要凭印象编 API）；
+  ② **源码里的 `assert` 文案**（可直接引用成文档里的约束说明，比自己措辞更准）。
+  还有一条：**"搜不到"本身就是证据**——全仓搜不到 `register_resolver` / `oc.env` 即可断定没有环境变量插值，
+  于是文档该写"不支持 `${VAR}` 自动替换"，而不是想当然写成支持。
+  把这些出处逐条写进 PR 描述，reviewer 能秒验，也能挡住"把不存在的行为写成文档"这类最难被发现的错。
+- **跑本 skill 自带测试的正确姿势**：本地 `~/.workbuddy/skills/contrib-radar/` 是**精简副本，不含 `tests/` 和 `run_tests.py`**，
+  它们只存在于 GitHub 仓库（`louisss1016/contrib-radar`）。要跑全量测试需先拉远端 `tests/` 到本地，
+  并把 `scripts/` 放进 `<root>/contrib-radar/scripts/`（`run_tests.py` 按这个布局拼 path）。
+  好消息是 `run_tests.py` **零依赖、只用标准库 `unittest`**——PyPI 不可达的环境里照样能跑，别被"装不了 pytest"劝退。
+- **范围控制**：单个 PR 建议改动控制在 300 行以内，超出则建议拆分。
+  顺带一条判定经验：遇到"机械修复 N 个文件的 lint 违规"这类切入点时，先估 diff——
+  若超过 300 行且落在正在被密集迭代的新子包上（如刚合入的 PR 新增目录），**应降级为开 issue 报告**而不是提 PR。
+- **PR 维护**：上游 main 更新后及时 rebase，冲突解决后必须重跑测试，force push 用 `--force-with-lease`。
+- **非 GitHub 平台**（GitLab/Gitee）：流程通用，但自带脚本仅支持 GitHub，需改用 WebFetch 人工核查活跃度。
+
+## Resources
+
+- `references/project-discovery.md` — 项目筛选标准、活跃度指标、GitHub 搜索语法（日期动态化示例）、聚合站点、健康度打分模型
+- `references/opportunity-analysis.md` — 贡献类型、Issue 筛选模板、AI 政策前置检查、7 维架构分析清单、Top 3 输出模板
+- `references/contribution-workflow.md` — Baseline 采集 / 认领检测 / 方案设计 / 代码实现 / PR 提交（含可复现测试报告模板）/ PR 维护（rebase/冲突）/ 面试叙事（STAR + 60 秒话术）/ 跨平台注意事项
+- `references/example-analysis.md` — 端到端分析示例与格式自检清单（输出颗粒度校准用）
+- `references/communication-templates.md` — 英文沟通模板：Issue 认领、方向提案、PR 描述、回应 review、礼貌跟进
+- `references/api-pr-submission.md` — git 不可用时的纯 REST API 提 PR 流程（fork → Git Data API → PR），含脚本骨架与坑
+- `scripts/github_api.py` — 共享 GitHub API 封装（统一请求/限速/降级/仓库解析），三个脚本共用
+- `scripts/progress.py` — 共享执行进度事件（v3.7）：管道模式发 `[CR-PROGRESS]` JSON 事件，TTY 模式刷 ASCII 进度条，全部走 stderr；`--quiet` / `CR_QUIET=1` 关闭
+- `scripts/auth_check.py` — GitHub 授权预检（v3.8）：四源 token 解析 + `GET /user` 验证；未认证时输出授权步骤（PAT / gh CLI / 连接器）。`python scripts/auth_check.py [--json] [--quiet]`；退出码 0=已认证、1=未认证、2=瞬时错误
+- `scripts/discover_repos.py` — 候选项目发现：`python scripts/discover_repos.py --topic ai-agent --language typescript [--beginner] [--json]`
+- `scripts/repo_health.py` — 仓库健康度体检（支持批量 + AI 政策检查，v3.2 去误报）：`python scripts/repo_health.py owner/repo [owner/repo2 ...] [--json]`
+- `scripts/find_issues.py` — 可认领 Issue 机筛与打分（含撞车检测 + 标签零命中 fallback + milestone 维度）：`python scripts/find_issues.py owner/repo [--include-bugs] [--json] [--no-fallback]`
