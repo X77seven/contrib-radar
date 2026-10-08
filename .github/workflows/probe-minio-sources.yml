@@ -19,14 +19,15 @@ jobs:
         run: |
           set +e
           IMAGES=(
-            "quay.io/minio/minio:latest"
-            "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
-            "minio/minio:latest"
-            "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+            "quay.io/minio/aistor/minio:RELEASE.2026-09-19T17-05-25Z"
+            "quay.io/minio/aistor/minio:latest"
+            "chrislusf/seaweedfs:4.47"
+            "chrislusf/seaweedfs:latest"
+            "pgsty/silo:RELEASE.2026-09-03T13-18-01Z"
+            "pgsty/silo:latest"
             "redis:7-alpine"
-            "postgres:16-alpine"
           )
-          echo "=== REAL DOCKER PULL ==="
+          echo "=== REAL DOCKER PULL (replacement candidates) ==="
           printf "%-52s | %-6s | %s\n" "IMAGE" "RESULT" "DETAIL"
           for img in "${IMAGES[@]}"; do
             out=$(docker pull "$img" 2>&1)
@@ -57,10 +58,10 @@ jobs:
             printf "%-52s | HTTP %s\n" "$host/$repo:$ref" "$code"
           }
           echo "=== REGISTRY API (anonymous, with OAuth2 handshake) ==="
-          probe registry-1.docker.io minio/minio latest
-          probe registry-1.docker.io minio/minio RELEASE.2025-09-07T16-13-09Z
           probe quay.io minio/minio latest
-          probe quay.io minio/minio RELEASE.2025-09-07T16-13-09Z
-          probe quay.io prometheus/prometheus latest
-          probe ghcr.io minio/minio latest
-          probe ghcr.io open-webui/open-webui main
+          probe quay.io minio/aistor/minio latest
+          probe quay.io minio/aistor/minio RELEASE.2026-09-19T17-05-25Z
+          probe registry-1.docker.io chrislusf/seaweedfs latest
+          probe registry-1.docker.io pgsty/silo latest
+          probe registry-1.docker.io minio/minio latest
+          probe registry-1.docker.io redis 7-alpine
