@@ -1,0 +1,61 @@
+name: verify-silo-dropin
+
+on:
+  push:
+    paths:
+      - '.github/workflows/verify-silo-dropin.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull candidate tags
+        run: |
+          echo "=== PULL ==="
+          for t in RELEASE.2026-09-16T00-00-00Z RELEASE.2026-09-03T13-18-01Z; do
+            if docker pull docker.io/pgsty/silo:$t >/dev/null 2>&1; then
+              echo "OK     docker.io/pgsty/silo:$t"
+            else
+              echo "FAIL   docker.io/pgsty/silo:$t"
+            fi
+          done
+
+      - name: Start with SkillHub's exact env and command
+        run: |
+          docker run -d --name silo -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z \
+            server /data --console-address ":9001"
+          echo "=== HEALTH ==="
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "LIVE_OK after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:9000/minio/health/live && echo "live=yes"
+          curl -fsS http://localhost:9000/minio/health/ready && echo "ready=yes"
+          curl -sS -o /dev/null -w "console_port_9001=%{http_code}\n" http://localhost:9001/
+
+      - name: S3 round-trip with AWS CLI
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          echo "=== S3 ROUND TRIP ==="
+          EP=http://localhost:9000
+          aws --endpoint-url $EP s3 mb s3://skillhub-probe && echo "mb=ok"
+          echo hello-silo > /tmp/probe.txt
+          aws --endpoint-url $EP s3 cp /tmp/probe.txt s3://skillhub-probe/probe.txt && echo "put=ok"
+          aws --endpoint-url $EP s3 cp s3://skillhub-probe/probe.txt /tmp/back.txt && echo "get=ok"
+          cat /tmp/back.txt
+          aws --endpoint-url $EP s3 ls s3://skillhub-probe && echo "ls=ok"
+          aws --endpoint-url $EP s3 rb --force s3://skillhub-probe && echo "rb=ok"
+
+      - name: Container log tail
+        if: always()
+        run: docker logs --tail 15 silo || true
