@@ -14,16 +14,16 @@ jobs:
         run: |
           set +e
           URLS=(
-    "https://platform.vidu.cn/docs/function-list"
-    "https://platform.vidu.cn/docs/overview/function-list.md"
-    "https://platform.vidu.cn/docs/overview/model-map.md"
-    "https://platform.vidu.cn/docs/pricing"
-    "https://platform.vidu.cn/docs"
-    "https://github.com/AgnesAI-Labs/AgnesAI-Models/blob/main/MODEL_CATALOG.md"
-    "https://wiki.agnes-ai.com/en/docs/pricing.md"
-    "https://wiki.agnes-ai.com/en/docs"
-    "https://api.minimax.cn"
-    "https://api.minimaxi.com/v1"
+            "https://platform.vidu.cn/docs/function-list"
+            "https://platform.vidu.cn/docs/overview/function-list.md"
+            "https://platform.vidu.cn/docs/overview/model-map.md"
+            "https://platform.vidu.cn/docs/pricing"
+            "https://platform.vidu.cn/docs"
+            "https://github.com/AgnesAI-Labs/AgnesAI-Models/blob/main/MODEL_CATALOG.md"
+            "https://wiki.agnes-ai.com/en/docs/pricing.md"
+            "https://wiki.agnes-ai.com/en/docs"
+            "https://api.minimax.cn"
+            "https://api.minimaxi.com/v1"
           )
           for u in "${URLS[@]}"; do
             echo "=============================================================="
